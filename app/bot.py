@@ -19,7 +19,7 @@ from telegram.ext import (
     filters,
 )
 
-from app.config import config, load_config
+from config import config, load_config
 
 # Load .env before building the Application so the bot token is available.
 load_config()

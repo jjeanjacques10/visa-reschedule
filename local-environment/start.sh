@@ -3,15 +3,13 @@
 # start.sh — Bootstrap the local development environment for visa-reschedule
 #
 # What this script does:
-#   1. Starts LocalStack via Docker Compose (if not already running)
+#   1. Starts LocalStack + DynamoDB Admin via Docker Compose
 #   2. Waits until LocalStack is healthy
-#   3. Creates DynamoDB tables (Users, Appointments)
-#   4. Creates the SQS queue (AppointmentQueue)
-#   5. Copies .env.local → ../.env so the app picks it up automatically
+#   3. Runs provisioning scripts mounted in /etc/localstack/init/ready.d
+#   4. Copies .env.local → ../.env so the app picks it up automatically
 #
 # Prerequisites:
 #   - Docker and Docker Compose installed
-#   - AWS CLI installed (used to provision resources via LocalStack)
 #
 # Usage:
 #   cd local-environment
@@ -34,7 +32,7 @@ export AWS_DEFAULT_REGION="${AWS_REGION}"
 USERS_TABLE="visa-reschedule-users"
 APPOINTMENTS_TABLE="visa-reschedule-appointments"
 SQS_QUEUE_NAME="visa-reschedule-appointments"
-SQS_DLQ_NAME="visa-reschedule-appointments-dlq"
+LOCALSTACK_CONTAINER="visa-reschedule-localstack"
 
 # Colours
 GREEN='\033[0;32m'
@@ -58,121 +56,46 @@ check_dependency() {
 
 info "Checking dependencies..."
 check_dependency docker
-check_dependency aws
 
-# ── Start LocalStack ──────────────────────────────────────────────────────────
+# ── Start services ────────────────────────────────────────────────────────────
 
-info "Starting LocalStack..."
+info "Starting LocalStack and DynamoDB Admin..."
 cd "${SCRIPT_DIR}"
-
-if docker compose ps localstack 2>/dev/null | grep -q "running"; then
-    info "LocalStack is already running."
-else
-    docker compose up -d localstack
-fi
+docker compose up -d localstack dynamodb-admin
 
 # ── Wait for LocalStack to be healthy ─────────────────────────────────────────
 
-info "Waiting for LocalStack to be ready..."
+info "Waiting for LocalStack to be healthy..."
 MAX_RETRIES=30
 RETRY_INTERVAL=3
 
 for i in $(seq 1 "${MAX_RETRIES}"); do
-    if curl -sf "${LOCALSTACK_ENDPOINT}/_localstack/health" \
-            | grep -q '"dynamodb": "running"' 2>/dev/null; then
+    HEALTH_STATUS=$(docker inspect \
+        --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' \
+        "${LOCALSTACK_CONTAINER}" 2>/dev/null || echo "unknown")
+
+    if [ "${HEALTH_STATUS}" = "healthy" ]; then
         info "LocalStack is ready."
         break
     fi
+
     if [ "${i}" -eq "${MAX_RETRIES}" ]; then
         error "LocalStack did not become healthy after $((MAX_RETRIES * RETRY_INTERVAL)) seconds."
         error "Check 'docker compose logs localstack' for details."
         exit 1
     fi
-    warn "LocalStack not ready yet (attempt ${i}/${MAX_RETRIES}). Retrying in ${RETRY_INTERVAL}s..."
+
+    warn "LocalStack status is '${HEALTH_STATUS}' (attempt ${i}/${MAX_RETRIES}). Retrying in ${RETRY_INTERVAL}s..."
     sleep "${RETRY_INTERVAL}"
 done
 
-# ── Helper: create DynamoDB table (idempotent) ────────────────────────────────
+# ── Provision resources via LocalStack init scripts ──────────────────────────
 
-create_dynamodb_table() {
-    local table_name="$1"
-    local pk_name="$2"
+info "Provisioning resources inside LocalStack container..."
+docker exec "${LOCALSTACK_CONTAINER}" sh /etc/localstack/init/ready.d/create_table.sh
+docker exec "${LOCALSTACK_CONTAINER}" sh /etc/localstack/init/ready.d/create_sqs.sh
 
-    if aws dynamodb describe-table \
-            --table-name "${table_name}" \
-            --endpoint-url "${LOCALSTACK_ENDPOINT}" \
-            --region "${AWS_REGION}" \
-            --output text &>/dev/null; then
-        info "DynamoDB table '${table_name}' already exists – skipping."
-        return
-    fi
-
-    info "Creating DynamoDB table '${table_name}'..."
-    aws dynamodb create-table \
-        --table-name "${table_name}" \
-        --attribute-definitions AttributeName="${pk_name}",AttributeType=S \
-        --key-schema AttributeName="${pk_name}",KeyType=HASH \
-        --billing-mode PAY_PER_REQUEST \
-        --endpoint-url "${LOCALSTACK_ENDPOINT}" \
-        --region "${AWS_REGION}" \
-        --output text > /dev/null
-    info "Table '${table_name}' created."
-}
-
-# ── Helper: create SQS queue (idempotent) ─────────────────────────────────────
-
-create_sqs_queue() {
-    local queue_name="$1"
-    local extra_args=("${@:2}")
-
-    local existing
-    existing=$(aws sqs get-queue-url \
-        --queue-name "${queue_name}" \
-        --endpoint-url "${LOCALSTACK_ENDPOINT}" \
-        --region "${AWS_REGION}" \
-        --output text 2>/dev/null || true)
-
-    if [ -n "${existing}" ]; then
-        info "SQS queue '${queue_name}' already exists – skipping."
-        echo "${existing}"
-        return
-    fi
-
-    info "Creating SQS queue '${queue_name}'..."
-    local queue_url
-    queue_url=$(aws sqs create-queue \
-        --queue-name "${queue_name}" \
-        --endpoint-url "${LOCALSTACK_ENDPOINT}" \
-        --region "${AWS_REGION}" \
-        "${extra_args[@]}" \
-        --query "QueueUrl" \
-        --output text)
-    info "Queue '${queue_name}' created: ${queue_url}"
-    echo "${queue_url}"
-}
-
-# ── Provision DynamoDB tables ─────────────────────────────────────────────────
-
-create_dynamodb_table "${USERS_TABLE}"        "user_id"
-create_dynamodb_table "${APPOINTMENTS_TABLE}" "appointment_id"
-
-# ── Provision SQS queues ──────────────────────────────────────────────────────
-
-DLQ_URL=$(create_sqs_queue "${SQS_DLQ_NAME}" \
-    --attributes "MessageRetentionPeriod=1209600")
-
-DLQ_ARN=$(aws sqs get-queue-attributes \
-    --queue-url "${DLQ_URL}" \
-    --attribute-names QueueArn \
-    --endpoint-url "${LOCALSTACK_ENDPOINT}" \
-    --region "${AWS_REGION}" \
-    --query "Attributes.QueueArn" \
-    --output text)
-
-REDRIVE_POLICY="{\"deadLetterTargetArn\":\"${DLQ_ARN}\",\"maxReceiveCount\":\"3\"}"
-
-QUEUE_URL=$(create_sqs_queue "${SQS_QUEUE_NAME}" \
-    --attributes "VisibilityTimeout=660,MessageRetentionPeriod=86400,RedrivePolicy=${REDRIVE_POLICY}")
+QUEUE_URL="${LOCALSTACK_ENDPOINT}/000000000000/${SQS_QUEUE_NAME}"
 
 # ── Copy .env.local → ../.env ─────────────────────────────────────────────────
 
