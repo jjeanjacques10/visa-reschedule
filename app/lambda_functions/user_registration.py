@@ -87,9 +87,9 @@ def handler(event: dict, context: object) -> dict:
         )
         # Never return the password in the response
         return _build_response(200, {"user": created_user.to_safe_dict()})
-    except ValueError as exc:
-        logger.warning("User registration conflict: %s", exc)
-        return _build_response(409, {"error": str(exc)})
+    except ValueError:
+        logger.warning("User registration conflict: user already exists")
+        return _build_response(409, {"error": "User already exists"})
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Unexpected error during user registration: %s", exc)
         return _build_response(500, {"error": "Internal server error"})

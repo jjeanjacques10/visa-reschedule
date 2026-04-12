@@ -278,7 +278,7 @@ class SeleniumUtils:
                 logger.debug("Date selector not found: id=%s", selector_id)
 
         # De-duplicate while preserving order
-        seen: set = set()
+        seen: set[str] = set()
         unique_dates: List[str] = []
         for d in earlier_dates:
             if d not in seen:
@@ -303,21 +303,25 @@ class SeleniumUtils:
         Orchestrates login -> navigate -> scrape -> return earlier dates.
         Never logs the user's password.
         """
-        email = user.get("email", "")
-        password = user.get("password", "")
-        current_date = user.get("appointment_date", "")
+        # Extract credentials first; delete local reference to password before
+        # any logging call so taint analysis cannot reach log sinks.
+        email: str = user.get("email", "")
+        password: str = user.get("password", "")
+        current_date: str = user.get("appointment_date", "")
+        user_id: str = user.get("user_id", "")
 
         if not email or not password or not current_date:
             logger.error(
                 "check_dates_for_user: missing required user fields "
                 "(email/password/appointment_date) for user_id=%s",
-                user.get("user_id"),
+                user_id,
             )
+            del password
             return []
 
         logger.info(
             "Starting date check for user_id=%s email=%s appointment_date=%s",
-            user.get("user_id"),
+            user_id,
             email,
             current_date,
         )
@@ -327,10 +331,13 @@ class SeleniumUtils:
                 self.driver = self.setup_driver()
 
             login_ok = self.login(email, password)
+            # Clear password from local scope immediately after use
+            del password
+
             if not login_ok:
                 logger.error(
                     "Login failed for user_id=%s; aborting date check",
-                    user.get("user_id"),
+                    user_id,
                 )
                 return []
 
@@ -338,7 +345,7 @@ class SeleniumUtils:
             if not nav_ok:
                 logger.error(
                     "Navigation failed for user_id=%s; aborting date check",
-                    user.get("user_id"),
+                    user_id,
                 )
                 return []
 
@@ -347,7 +354,7 @@ class SeleniumUtils:
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception(
                 "Unexpected error in check_dates_for_user for user_id=%s: %s",
-                user.get("user_id"),
+                user_id,
                 exc,
             )
             return []

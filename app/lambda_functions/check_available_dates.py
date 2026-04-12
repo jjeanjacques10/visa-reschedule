@@ -36,10 +36,8 @@ def _get_sqs_client():
     return _sqs_client
 
 
-def _send_to_sqs(queue_url: str, user_data: dict) -> None:
-    """Send a single user payload to the SQS queue."""
-    # Never include the password in the SQS message
-    safe_payload = {k: v for k, v in user_data.items() if k != "password"}
+def _send_to_sqs(queue_url: str, safe_payload: dict) -> None:
+    """Send a single user payload (no password) to the SQS queue."""
     message_body = json.dumps(safe_payload)
     try:
         _get_sqs_client().send_message(
@@ -82,7 +80,7 @@ def handler(event: dict, context: object) -> dict:
             )
             continue
         try:
-            _send_to_sqs(queue_url, user.to_dict())
+            _send_to_sqs(queue_url, user.to_safe_dict())
             enqueued += 1
         except ClientError:
             failed += 1
