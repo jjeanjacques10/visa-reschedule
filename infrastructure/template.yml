@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Visa Reschedule for Brasil – serverless appointment monitoring service
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 300
+    MemorySize: 512
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        AWS_REGION: !Ref AWS::Region
+        DYNAMODB_USERS_TABLE: !Ref UsersTable
+        DYNAMODB_APPOINTMENTS_TABLE: !Ref AppointmentsTable
+        APPOINTMENT_QUEUE_URL: !Ref AppointmentQueue
+        TELEGRAM_BOT_TOKEN: !Sub "{{resolve:ssm:/visa-reschedule/${Environment}/telegram-bot-token}}"
+
+Resources:
+
+  # ----------------------------------------------------------------
+  # Lambda – User Registration (API Gateway trigger)
+  # ----------------------------------------------------------------
+  UserRegistrationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "visa-reschedule-user-registration-${Environment}"
+      CodeUri: ../app/
+      Handler: lambda_handler.handler
+      Description: Registers a new user via API Gateway POST /register
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        RegisterApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref VisaRescheduleApi
+            Path: /register
+            Method: POST
+
+  # ----------------------------------------------------------------
+  # Lambda – Check Available Dates (EventBridge schedule)
+  # ----------------------------------------------------------------
+  CheckAvailableDatesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "visa-reschedule-check-dates-${Environment}"
+      CodeUri: ../app/
+      Handler: lambda_handler.handler
+      Description: Scans active users and enqueues them in SQS (runs 3x daily)
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AppointmentQueue.QueueName
+      Events:
+        ScheduledCheck:
+          Type: Schedule
+          Properties:
+            Schedule: "cron(0 8,14,20 * * ? *)"
+            Description: "Check available dates at 08:00, 14:00 and 20:00 UTC"
+            Enabled: true
+
+  # ----------------------------------------------------------------
+  # Lambda – Send Notifications (SQS trigger)
+  # ----------------------------------------------------------------
+  SendNotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "visa-reschedule-send-notifications-${Environment}"
+      CodeUri: ../app/
+      Handler: lambda_handler.handler
+      Description: Consumes SQS messages, runs Selenium, sends Telegram notifications
+      Timeout: 600
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - SQSPollerPolicy:
+            QueueName: !GetAtt AppointmentQueue.QueueName
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AppointmentQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # ----------------------------------------------------------------
+  # API Gateway
+  # ----------------------------------------------------------------
+  VisaRescheduleApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "visa-reschedule-api-${Environment}"
+      StageName: !Ref Environment
+
+  # ----------------------------------------------------------------
+  # DynamoDB – Users table
+  # ----------------------------------------------------------------
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "visa-reschedule-users-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ----------------------------------------------------------------
+  # DynamoDB – Appointments table
+  # ----------------------------------------------------------------
+  AppointmentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "visa-reschedule-appointments-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: appointment_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: appointment_id
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ----------------------------------------------------------------
+  # SQS – Appointment queue
+  # ----------------------------------------------------------------
+  AppointmentQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "visa-reschedule-appointments-${Environment}"
+      VisibilityTimeout: 660   # > Lambda timeout to avoid double-processing
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AppointmentDLQ.Arn
+        maxReceiveCount: 3
+
+  AppointmentDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "visa-reschedule-appointments-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600  # 14 days
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${VisaRescheduleApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+
+  UserRegistrationFunctionArn:
+    Description: ARN of the UserRegistration Lambda function
+    Value: !GetAtt UserRegistrationFunction.Arn
+
+  CheckAvailableDatesFunctionArn:
+    Description: ARN of the CheckAvailableDates Lambda function
+    Value: !GetAtt CheckAvailableDatesFunction.Arn
+
+  SendNotificationsFunctionArn:
+    Description: ARN of the SendNotifications Lambda function
+    Value: !GetAtt SendNotificationsFunction.Arn
+
+  UsersTableName:
+    Description: DynamoDB Users table name
+    Value: !Ref UsersTable
+
+  AppointmentsTableName:
+    Description: DynamoDB Appointments table name
+    Value: !Ref AppointmentsTable
+
+  AppointmentQueueUrl:
+    Description: SQS Appointment queue URL
+    Value: !Ref AppointmentQueue
+
+  AppointmentDLQUrl:
+    Description: SQS Dead-letter queue URL
+    Value: !Ref AppointmentDLQ
