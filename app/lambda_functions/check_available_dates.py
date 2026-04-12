@@ -13,7 +13,11 @@ import os
 import boto3
 from botocore.exceptions import ClientError
 
+from app.config import load_config
 from app.database.dynamodb_client import DynamoDBClient
+
+# Load .env when running locally (SAM CLI / unit tests); no-op in real Lambda.
+load_config()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -54,9 +58,11 @@ def _send_to_sqs(queue_url: str, safe_payload: dict) -> None:
 
 def handler(event: dict, context: object) -> dict:
     """Collect active users and dispatch each to SQS for date-checking."""
-    queue_url = os.environ.get("APPOINTMENT_QUEUE_URL")
-    if not queue_url:
-        logger.error("APPOINTMENT_QUEUE_URL environment variable is not set")
+    from app.config import config
+    try:
+        queue_url = config.appointment_queue_url
+    except RuntimeError as exc:
+        logger.error("%s", exc)
         return {"statusCode": 500, "body": "APPOINTMENT_QUEUE_URL not configured"}
 
     logger.info("check_available_dates handler invoked")

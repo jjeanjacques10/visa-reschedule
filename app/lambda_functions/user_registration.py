@@ -11,8 +11,12 @@ import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.config import load_config
 from app.database.dynamodb_client import DynamoDBClient
 from app.database.models import User
+
+# Load .env when running locally (SAM CLI / unit tests); no-op in real Lambda.
+load_config()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

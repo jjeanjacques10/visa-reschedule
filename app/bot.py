@@ -6,7 +6,6 @@ Guides users through registration via a multi-step ConversationHandler.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -19,6 +18,11 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+
+from app.config import config, load_config
+
+# Load .env before building the Application so the bot token is available.
+load_config()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -315,9 +319,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def build_application() -> Application:
     """Build and configure the Telegram Application."""
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not bot_token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set")
+    try:
+        bot_token = config.telegram_bot_token
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Cannot start bot: TELEGRAM_BOT_TOKEN is not set. "
+            "Add it to your .env file or set it as an environment variable."
+        ) from exc
 
     application = Application.builder().token(bot_token).build()
 

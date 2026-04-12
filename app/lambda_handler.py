@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import logging
 
+from app.config import load_config
+
+# Load .env when running locally (SAM CLI / unit tests); no-op in real Lambda.
+load_config()
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,

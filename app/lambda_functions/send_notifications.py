@@ -11,9 +11,13 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from app.config import load_config
 from app.database.dynamodb_client import DynamoDBClient
 from app.utils.notification_utils import NotificationUtils
 from app.utils.selenium_utils import SeleniumUtils
+
+# Load .env when running locally (SAM CLI / unit tests); no-op in real Lambda.
+load_config()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -29,9 +33,15 @@ def _get_db_client() -> DynamoDBClient:
 
 
 def _get_notification_utils() -> NotificationUtils:
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not bot_token:
-        logger.warning("TELEGRAM_BOT_TOKEN is not set; notifications will fail")
+    try:
+        from app.config import config
+        bot_token = config.telegram_bot_token
+    except RuntimeError:
+        logger.warning(
+            "TELEGRAM_BOT_TOKEN is not set; notifications will not be sent. "
+            "Add it to your .env file or process environment."
+        )
+        bot_token = ""
     return NotificationUtils(bot_token=bot_token)
 
 

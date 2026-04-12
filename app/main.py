@@ -7,9 +7,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 
 from flask import Flask, jsonify, request
+
+from app.config import config, load_config
+
+# Load .env before anything else so all sub-modules see the variables.
+load_config()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,14 +91,17 @@ def check_dates():
         finally:
             selenium.close()
 
-        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        if available_dates and bot_token:
-            notifier = NotificationUtils(bot_token=bot_token)
-            notifier.send_available_dates_notification(
-                chat_id=user.telegram_id,
-                available_dates=available_dates,
-                current_date=user.appointment_date,
-            )
+        try:
+            bot_token = config.telegram_bot_token
+            if available_dates:
+                notifier = NotificationUtils(bot_token=bot_token)
+                notifier.send_available_dates_notification(
+                    chat_id=user.telegram_id,
+                    available_dates=available_dates,
+                    current_date=user.appointment_date,
+                )
+        except RuntimeError as exc:
+            logger.warning("Telegram notification skipped: %s", exc)
 
         return jsonify({"available_dates": available_dates}), 200
     except Exception as exc:  # pylint: disable=broad-except
@@ -107,7 +114,7 @@ def check_dates():
 # ------------------------------------------------------------------
 
 if __name__ == "__main__":
-    port = int(os.environ.get("FLASK_PORT", 5000))
-    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    port = config.flask_port
+    debug = config.flask_debug
     logger.info("Starting Flask app on port %d (debug=%s)", port, debug)
     app.run(host="0.0.0.0", port=port, debug=debug)
