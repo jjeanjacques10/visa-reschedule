@@ -78,7 +78,12 @@ def check_dates():
 
         selenium = SeleniumUtils(headless=True)
         try:
-            available_dates = selenium.check_dates_for_user(user.to_dict())
+            available_dates = selenium.check_dates_for_user(
+                user_id=user.user_id,
+                email=user.email,
+                password=user.password,
+                appointment_date=user.appointment_date,
+            )
         finally:
             selenium.close()
 

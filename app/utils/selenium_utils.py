@@ -296,34 +296,31 @@ class SeleniumUtils:
     # High-level orchestration
     # ------------------------------------------------------------------
 
-    def check_dates_for_user(self, user: dict) -> List[str]:
+    def check_dates_for_user(
+        self,
+        user_id: str,
+        email: str,
+        password: str,
+        appointment_date: str,
+    ) -> List[str]:
         """
         Full automation flow for a single user.
 
-        Orchestrates login -> navigate -> scrape -> return earlier dates.
-        Never logs the user's password.
+        Accepts explicit parameters so that only `password` is tainted;
+        `user_id` and `appointment_date` are clean variables that are safe to log.
+        Never logs the password itself.
         """
-        # Extract credentials first; delete local reference to password before
-        # any logging call so taint analysis cannot reach log sinks.
-        email: str = user.get("email", "")
-        password: str = user.get("password", "")
-        current_date: str = user.get("appointment_date", "")
-        user_id: str = user.get("user_id", "")
-
-        if not email or not password or not current_date:
+        if not email or not password or not appointment_date:
             logger.error(
-                "check_dates_for_user: missing required user fields "
-                "(email/password/appointment_date) for user_id=%s",
+                "check_dates_for_user: missing required fields for user_id=%s",
                 user_id,
             )
-            del password
             return []
 
         logger.info(
-            "Starting date check for user_id=%s email=%s appointment_date=%s",
+            "Starting date check for user_id=%s appointment_date=%s",
             user_id,
-            email,
-            current_date,
+            appointment_date,
         )
 
         try:
@@ -349,7 +346,7 @@ class SeleniumUtils:
                 )
                 return []
 
-            return self.get_available_dates(current_date)
+            return self.get_available_dates(appointment_date)
 
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception(

@@ -58,15 +58,16 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         logger.info("Skipping cancelled user: user_id=%s", user_id)
         return
 
-    logger.info(
-        "Checking dates for user_id=%s appointment_date=%s",
-        user_id,
-        user.appointment_date,
-    )
+    logger.info("Checking dates for user_id=%s", user_id)
 
     selenium = SeleniumUtils(headless=True)
     try:
-        available_dates = selenium.check_dates_for_user(user.to_dict())
+        available_dates = selenium.check_dates_for_user(
+            user_id=user.user_id,
+            email=user.email,
+            password=user.password,
+            appointment_date=user.appointment_date,
+        )
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception(
             "Selenium check failed for user_id=%s: %s", user_id, exc
