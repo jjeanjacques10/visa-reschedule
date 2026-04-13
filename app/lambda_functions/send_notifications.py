@@ -11,7 +11,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from app.config import load_config
+from app.config import config, load_config
 from app.database.dynamodb_client import DynamoDBClient
 from app.utils.notification_utils import NotificationUtils
 from app.utils.selenium_utils import SeleniumUtils
@@ -114,7 +114,6 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
 
     logger.info("Checking dates for user_id=%s", user.user_id)
 
-    from app.config import config
     selenium = SeleniumUtils(headless=config.selenium_headless)
     try:
         available_dates = selenium.check_dates_for_user(
@@ -141,31 +140,30 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
 
     if not available_dates:
         logger.info("No earlier dates found for user_id=%s", user.user_id)
-        if not notify_on_complete:
-            return
-        if not _can_send_daily_notification(user):
-            logger.info(
-                "Skipping no-dates notification for user_id=%s: already notified today",
-                user.user_id,
+        if notify_on_complete:
+            if not _can_send_daily_notification(user):
+                logger.info(
+                    "Skipping no-dates notification for user_id=%s: already notified today",
+                    user.user_id,
+                )
+                return
+            sent = notifier.send_message(
+                chat_id=user.telegram_id,
+                message=(
+                    "✅ <b>Busca concluída.</b>\n"
+                    "Nenhuma data anterior foi encontrada no momento.\n"
+                    f"Agendamento atual: <b>{user.appointment_date}</b>"
+                ),
             )
-            return
-        sent = notifier.send_message(
-            chat_id=user.telegram_id,
-            message=(
-                "✅ <b>Busca concluída.</b>\n"
-                "Nenhuma data anterior foi encontrada no momento.\n"
-                f"Agendamento atual: <b>{user.appointment_date}</b>"
-            ),
-        )
-        if sent:
-            db.update_user(
-                user.user_id,
-                {
-                    "last_notified_date": _now_utc_iso(),
-                    "notification_count": user.notification_count + 1,
-                    "status": "pending",
-                },
-            )
+            if sent:
+                db.update_user(
+                    user.user_id,
+                    {
+                        "last_notified_date": _now_utc_iso(),
+                        "notification_count": user.notification_count + 1,
+                        "status": "pending",
+                    },
+                )
         return
 
     logger.info(
