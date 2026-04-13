@@ -89,9 +89,11 @@ def _send_sqs_registration_trigger(user: User) -> bool:
         return False
 
     try:
+        payload = user.to_safe_dict()
+        payload["notify_on_complete"] = True
         _get_sqs_client().send_message(
             QueueUrl=queue_url,
-            MessageBody=json.dumps(user.to_safe_dict()),
+            MessageBody=json.dumps(payload),
         )
         logger.info("Immediate check queued for user_id=%s", user.user_id)
         return True

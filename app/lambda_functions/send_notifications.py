@@ -78,6 +78,9 @@ def _already_notified_today_utc(last_notified_date: str | None) -> bool:
         logger.warning("Invalid last_notified_date format: %s", last_notified_date)
         return False
 
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
     return parsed.astimezone(timezone.utc).date() == datetime.now(tz=timezone.utc).date()
 
 
@@ -93,7 +96,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         logger.error("Failed to parse SQS record body: %s", exc)
         return
 
-    notify_on_complete = bool(body.get("notify_on_complete", True))
+    notify_on_complete = bool(body.get("notify_on_complete"))
 
     # Always fetch fresh user data from DynamoDB (SQS message may be stale)
     user = _resolve_user_from_record(body, db)
