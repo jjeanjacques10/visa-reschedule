@@ -171,6 +171,8 @@ infrastructure/
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
 | `FLASK_DEBUG` | Enable Flask debug mode (`true`/`false`) |
 | `FLASK_PORT` | Flask port (default: `5000`) |
+| `ENVIRONMENT` | Runtime environment (`dev` shows browser by default; other values run headless by default) |
+| `SELENIUM_HEADLESS` | Optional override for browser mode (`true`/`false`) |
 | `CHROMEDRIVER_PATH` | Optional path to ChromeDriver binary |
 
 ---

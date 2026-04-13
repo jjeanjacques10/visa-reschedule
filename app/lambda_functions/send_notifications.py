@@ -114,7 +114,8 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
 
     logger.info("Checking dates for user_id=%s", user.user_id)
 
-    selenium = SeleniumUtils(headless=True)
+    from app.config import config
+    selenium = SeleniumUtils(headless=config.selenium_headless)
     try:
         available_dates = selenium.check_dates_for_user(
             user_id=user.user_id,

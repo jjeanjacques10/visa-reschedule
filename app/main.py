@@ -85,7 +85,7 @@ def check_dates():
         if user is None:
             return jsonify({"error": "User not found"}), 404
 
-        selenium = SeleniumUtils(headless=True)
+        selenium = SeleniumUtils(headless=config.selenium_headless)
         try:
             available_dates = selenium.check_dates_for_user(
                 user_id=user.user_id,
