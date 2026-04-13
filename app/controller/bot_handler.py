@@ -8,6 +8,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import boto3
@@ -53,7 +54,20 @@ def _get_db_client() -> DynamoDBClient:
 def _get_sqs_client():
     global _sqs_client
     if _sqs_client is None:
-        _sqs_client = boto3.client("sqs", region_name=config.aws_region)
+        endpoint_url = None
+        try:
+            queue_url = config.appointment_queue_url
+            parsed = urlparse(queue_url)
+            if parsed.scheme and parsed.netloc:
+                endpoint_url = f"{parsed.scheme}://{parsed.netloc}"
+        except RuntimeError:
+            endpoint_url = None
+
+        _sqs_client = boto3.client(
+            "sqs",
+            region_name=config.aws_region,
+            endpoint_url=endpoint_url,
+        )
     return _sqs_client
 
 
