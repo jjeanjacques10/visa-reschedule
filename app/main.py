@@ -73,6 +73,7 @@ def check_dates():
     """Manually trigger a date check for a specific user."""
     from app.utils.selenium_utils import SeleniumUtils
     from app.utils.notification_utils import NotificationUtils
+    from app.utils.selenium.core import DateCheckResult
 
     data = request.get_json(silent=True) or {}
     user_id = data.get("user_id")
@@ -87,7 +88,7 @@ def check_dates():
 
         selenium = SeleniumUtils(headless=config.selenium_headless)
         try:
-            available_dates = selenium.check_dates_for_user(
+            result: DateCheckResult = selenium.check_dates_for_user(
                 user_id=user.user_id,
                 email=user.email,
                 password=user.password,
@@ -96,19 +97,27 @@ def check_dates():
         finally:
             selenium.close()
 
+        portal_current = (result.portal_current_appointment_date or "").strip() or None
+        current_date_for_message = portal_current or user.appointment_date
+
         try:
             bot_token = config.telegram_bot_token
-            if available_dates:
+            if result.available_dates:
                 notifier = NotificationUtils(bot_token=bot_token)
                 notifier.send_available_dates_notification(
                     chat_id=user.telegram_id,
-                    available_dates=available_dates,
-                    current_date=user.appointment_date,
+                    available_dates=result.available_dates,
+                    current_date=current_date_for_message,
                 )
         except RuntimeError as exc:
             logger.warning("Telegram notification skipped: %s", exc)
 
-        return jsonify({"available_dates": available_dates}), 200
+        return jsonify(
+            {
+                "available_dates": result.available_dates,
+                "portal_current_appointment_date": portal_current,
+            }
+        ), 200
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Error during date check: %s", exc)
         return jsonify({"error": "Date check failed"}), 500

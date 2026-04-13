@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import time
+from dataclasses import dataclass
 from typing import List, Optional
 
 from selenium import webdriver
@@ -30,6 +33,18 @@ from .http_json import fetch_available_days_json
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class DateCheckResult:
+    """Result of a date check.
+
+    - portal_current_appointment_date: current appointment date as shown in the portal (best effort)
+    - available_dates: earlier dates available for rescheduling
+    """
+
+    portal_current_appointment_date: str | None
+    available_dates: List[str]
+
+
 class SeleniumUtils:
     """Automates the AIS visa portal to check for earlier appointment slots."""
 
@@ -38,6 +53,91 @@ class SeleniumUtils:
         self.driver: Optional[WebDriver] = None
         self._group_id: Optional[str] = None
         self._schedule_id: Optional[str] = None
+        self._portal_current_appointment_date: Optional[str] = None
+
+        # Keep the existing DEFAULT_TIMEOUT behaviour, but allow local overrides.
+        self._timeout_default: int = env_int(
+            "SELENIUM_TIMEOUT_DEFAULT",
+            default=int(getattr(constants, "DEFAULT_TIMEOUT", 20)),
+        )
+
+    def _wait(self, timeout_seconds: Optional[int] = None, poll_frequency: Optional[float] = None) -> WebDriverWait:
+        if self.driver is None:
+            raise RuntimeError("WebDriver is not initialised")
+        timeout = int(timeout_seconds if timeout_seconds is not None else self._timeout_default)
+        if poll_frequency is None:
+            return WebDriverWait(self.driver, timeout)
+        return WebDriverWait(self.driver, timeout, poll_frequency=float(poll_frequency))
+
+    def _extract_portal_current_appointment_date(self) -> Optional[str]:
+        """Best-effort extraction of the user's current appointment date displayed on the portal.
+
+        This runs on the group/summary pages. We keep it intentionally defensive because the
+        portal HTML varies across accounts/flows.
+        """
+
+        if self.driver is None:
+            return None
+
+        # Prefer numeric formats only; month names in pt-BR can be unreliable for parsing.
+        date_regex = re.compile(r"\b(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})\b")
+
+        def _clean(text: str) -> str:
+            return re.sub(r"\s+", " ", (text or "").strip())
+
+        # Strategy 1: find a date near keywords.
+        keyword_xpaths = [
+            "//*[contains(translate(normalize-space(.), 'AGENDAMENTO', 'agendamento'), 'agendamento')]",
+            "//*[contains(translate(normalize-space(.), 'ENTREVISTA', 'entrevista'), 'entrevista')]",
+            "//*[contains(translate(normalize-space(.), 'CONSULAR', 'consular'), 'consular')]",
+            "//*[contains(translate(normalize-space(.), 'CASV', 'casv'), 'casv')]",
+        ]
+
+        candidates: list[tuple[int, str]] = []  # (priority, date_str)
+        for xp in keyword_xpaths:
+            try:
+                els = self.driver.find_elements(By.XPATH, xp)
+            except Exception:
+                continue
+
+            for el in els[:30]:
+                try:
+                    txt = _clean(el.text)
+                except Exception:
+                    continue
+                if not txt:
+                    continue
+                m = date_regex.search(txt)
+                if not m:
+                    continue
+
+                date_str = m.group(1)
+                lowered = txt.lower()
+                priority = 50
+                if "consular" in lowered:
+                    priority = 0
+                elif "casv" in lowered:
+                    priority = 10
+                elif "agendamento" in lowered:
+                    priority = 20
+                candidates.append((priority, date_str))
+
+        if candidates:
+            candidates.sort(key=lambda t: t[0])
+            return candidates[0][1]
+
+        # Strategy 2: fallback to scanning visible body text.
+        try:
+            body_text = _clean(self.driver.find_element(By.TAG_NAME, "body").text)
+        except Exception:
+            body_text = ""
+
+        if body_text:
+            m = date_regex.search(body_text)
+            if m:
+                return m.group(1)
+
+        return None
 
     # ------------------------------------------------------------------
     # Driver lifecycle
@@ -45,6 +145,7 @@ class SeleniumUtils:
 
     def setup_driver(self) -> WebDriver:
         """Initialise a Chrome WebDriver with appropriate options."""
+        t0 = time.monotonic()
         options = Options()
         if self.headless:
             options.add_argument("--headless=new")
@@ -60,11 +161,15 @@ class SeleniumUtils:
         if chromedriver_path:
             service = Service(executable_path=chromedriver_path)
         else:
+            logger.info(
+                "CHROMEDRIVER_PATH is not set; using webdriver_manager to download/resolve chromedriver (can be slow locally)"
+            )
             service = Service(ChromeDriverManager().install())
 
         driver = webdriver.Chrome(service=service, options=options)
         driver.implicitly_wait(0)  # rely on explicit waits only
         logger.info("Chrome WebDriver initialised (headless=%s)", self.headless)
+        logger.info("setup_driver timing: %.2fs", time.monotonic() - t0)
         return driver
 
     def close(self) -> None:
@@ -227,7 +332,7 @@ class SeleniumUtils:
         if timeout_seconds <= 0:
             return self._captcha_token_present() or self._detect_captcha_present() is None
 
-        wait = WebDriverWait(self.driver, timeout_seconds, poll_frequency=0.5)
+        wait = WebDriverWait(self.driver, timeout_seconds, poll_frequency=2.0)
         try:
             wait.until(lambda _d: self._captcha_token_present() or self._detect_captcha_present() is None)
             return True
@@ -264,8 +369,9 @@ class SeleniumUtils:
 
         logger.info("Navigating to login page: %s", constants.LOGIN_URL)
         try:
+            t0 = time.monotonic()
             self.driver.get(constants.LOGIN_URL)
-            wait = WebDriverWait(self.driver, constants.DEFAULT_TIMEOUT)
+            wait = self._wait()
 
             email_field = wait.until(EC.presence_of_element_located((By.ID, "user_email")))
             email_field.clear()
@@ -396,6 +502,7 @@ class SeleniumUtils:
 
             current_url = self.driver.current_url
             logger.info("Login successful; redirected to %s", current_url)
+            logger.info("Login timing: %.2fs", time.monotonic() - t0)
 
             parts = current_url.rstrip("/").split("/")
             if "groups" in parts:
@@ -423,7 +530,8 @@ class SeleniumUtils:
             logger.error("Driver or group_id not initialised before navigation")
             return False
 
-        wait = WebDriverWait(self.driver, constants.DEFAULT_TIMEOUT)
+        t0 = time.monotonic()
+        wait = self._wait()
 
         def _extract_schedule_id_from_url(url: str) -> Optional[str]:
             parts = (url or "").rstrip("/").split("/")
@@ -508,6 +616,16 @@ class SeleniumUtils:
             logger.info("Navigating to group page: %s", group_url)
             self.driver.get(group_url)
 
+            # Capture current appointment date as shown in portal (best effort).
+            try:
+                extracted = self._extract_portal_current_appointment_date()
+                if extracted:
+                    self._portal_current_appointment_date = extracted
+                    logger.info("Portal current appointment date detected: %s", extracted)
+            except Exception:
+                # Non-fatal; keep going.
+                pass
+
             if _click_reagendar_entrevista():
                 wait.until(
                     lambda _d: ("/schedule/" in (self.driver.current_url or ""))
@@ -540,6 +658,7 @@ class SeleniumUtils:
                     and "print_instructions" not in (self.driver.current_url or "")
                 )
                 logger.info("Reached appointment page: %s", self.driver.current_url)
+                logger.info("Navigation timing: %.2fs", time.monotonic() - t0)
                 return True
 
             continue_btn = wait.until(
@@ -578,6 +697,7 @@ class SeleniumUtils:
                 and "print_instructions" not in (self.driver.current_url or "")
             )
             logger.info("Reached appointment page: %s", self.driver.current_url)
+            logger.info("Navigation timing: %.2fs", time.monotonic() - t0)
             return True
 
         except TimeoutException as exc:
@@ -692,7 +812,7 @@ class SeleniumUtils:
         if self.driver is None:
             return
 
-        wait = WebDriverWait(self.driver, constants.DEFAULT_TIMEOUT)
+        wait = self._wait()
         time_ids = [
             "appointments_consulate_appointment_time",
             "appointments_asc_appointment_time",
@@ -719,7 +839,7 @@ class SeleniumUtils:
         if self.driver is None:
             return
 
-        wait = WebDriverWait(self.driver, constants.DEFAULT_TIMEOUT)
+        wait = self._wait()
         facility_ids = [
             "appointments_consulate_appointment_facility_id",
             "appointments_asc_appointment_facility_id",
@@ -920,16 +1040,18 @@ class SeleniumUtils:
             except Exception:
                 return False
 
-        wait = WebDriverWait(self.driver, constants.DEFAULT_TIMEOUT)
+        wait = self._wait()
         try:
             wait.until(EC.visibility_of_element_located((By.ID, "ui-datepicker-div")))
         except TimeoutException:
             return False
 
         # Try a bounded number of month navigations.
+        container = None
         for _ in range(24):
             try:
-                container = self.driver.find_element(By.ID, "ui-datepicker-div")
+                if container is None:
+                    container = self.driver.find_element(By.ID, "ui-datepicker-div")
             except Exception:
                 return False
 
@@ -981,10 +1103,13 @@ class SeleniumUtils:
                     return False
                 # Wait until the month titles change.
                 old = displayed_keys
-                wait.until(lambda _d: [_ym_key(y, m) for (y, m) in _get_displayed_months()] != old)
+                self._wait(timeout_seconds=5).until(
+                    lambda _d: [_ym_key(y, m) for (y, m) in _get_displayed_months()] != old
+                )
             except TimeoutException:
                 continue
             except Exception:
+                container = None
                 continue
 
         return False
@@ -1032,7 +1157,8 @@ class SeleniumUtils:
             logger.error("Driver not initialised; call login() first")
             return []
 
-        wait = WebDriverWait(self.driver, constants.DEFAULT_TIMEOUT)
+        t0 = time.monotonic()
+        wait = self._wait()
         earlier_dates: List[str] = []
 
         try:
@@ -1136,16 +1262,17 @@ class SeleniumUtils:
                 pass
 
         logger.info("Found %d earlier date(s) than %s", len(unique_dates), current_appointment_date)
+        logger.info("get_available_dates timing: %.2fs", time.monotonic() - t0)
         return unique_dates
 
     # ------------------------------------------------------------------
     # High-level orchestration
     # ------------------------------------------------------------------
 
-    def check_dates_for_user(self, user_id: str, email: str, password: str, appointment_date: str) -> List[str]:
+    def check_dates_for_user(self, user_id: str, email: str, password: str, appointment_date: str) -> DateCheckResult:
         if not email or not password or not appointment_date:
             logger.error("check_dates_for_user: missing required fields for user_id=%s", user_id)
-            return []
+            return DateCheckResult(portal_current_appointment_date=None, available_dates=[])
 
         logger.info(
             "Starting date check for user_id=%s appointment_date=%s",
@@ -1157,19 +1284,30 @@ class SeleniumUtils:
             if self.driver is None:
                 self.driver = self.setup_driver()
 
+            self._portal_current_appointment_date = None
+
             login_ok = self.login(email, password)
             del password
 
             if not login_ok:
                 logger.error("Login failed for user_id=%s; aborting date check", user_id)
-                return []
+                return DateCheckResult(portal_current_appointment_date=None, available_dates=[])
 
             nav_ok = self._navigate_to_appointment_page()
             if not nav_ok:
                 logger.error("Navigation failed for user_id=%s; aborting date check", user_id)
-                return []
+                return DateCheckResult(
+                    portal_current_appointment_date=self._portal_current_appointment_date,
+                    available_dates=[],
+                )
 
-            return self.get_available_dates(appointment_date)
+            # Prefer the portal's current appointment date as the reference.
+            reference_date = self._portal_current_appointment_date or appointment_date
+            available = self.get_available_dates(reference_date)
+            return DateCheckResult(
+                portal_current_appointment_date=self._portal_current_appointment_date,
+                available_dates=available,
+            )
 
         except Exception as exc:
             logger.exception(
@@ -1177,4 +1315,4 @@ class SeleniumUtils:
                 user_id,
                 exc,
             )
-            return []
+            return DateCheckResult(portal_current_appointment_date=None, available_dates=[])

@@ -15,6 +15,8 @@ from app.config import config, load_config
 from app.database.dynamodb_client import DynamoDBClient
 from app.utils.notification_utils import NotificationUtils
 from app.utils.selenium_utils import SeleniumUtils
+from app.utils.selenium.core import DateCheckResult
+from app.utils.selenium.dates import parse_date_maybe_ptbr
 
 # Load .env when running locally (SAM CLI / unit tests); no-op in real Lambda.
 load_config()
@@ -116,7 +118,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
 
     selenium = SeleniumUtils(headless=config.selenium_headless)
     try:
-        available_dates = selenium.check_dates_for_user(
+        result: DateCheckResult = selenium.check_dates_for_user(
             user_id=user.user_id,
             email=user.email,
             password=user.password,
@@ -138,6 +140,38 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
     finally:
         selenium.close()
 
+    portal_current = (result.portal_current_appointment_date or "").strip() or None
+    current_date_for_message = portal_current or user.appointment_date
+
+    def _dates_equivalent(a: str | None, b: str | None) -> bool:
+        if not a and not b:
+            return True
+        if not a or not b:
+            return False
+        try:
+            return parse_date_maybe_ptbr(a).date() == parse_date_maybe_ptbr(b).date()
+        except Exception:
+            return a.strip() == b.strip()
+
+    # Sync DynamoDB appointment_date from portal when available.
+    if portal_current and not _dates_equivalent(portal_current, user.appointment_date):
+        try:
+            db.update_user(user.user_id, {"appointment_date": portal_current})
+            # Refresh local variable for subsequent message formatting.
+            user.appointment_date = portal_current
+            logger.info(
+                "Synced appointment_date from portal for user_id=%s: %s",
+                user.user_id,
+                portal_current,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Failed to sync appointment_date from portal for user_id=%s: %s",
+                user.user_id,
+                exc,
+            )
+
+    available_dates = result.available_dates
     if not available_dates:
         logger.info("No earlier dates found for user_id=%s", user.user_id)
         if notify_on_complete:
@@ -152,7 +186,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
                 message=(
                     "✅ <b>Busca concluída.</b>\n"
                     "Nenhuma data anterior foi encontrada no momento.\n"
-                    f"Agendamento atual: <b>{user.appointment_date}</b>"
+                    f"Agendamento atual: <b>{current_date_for_message}</b>"
                 ),
             )
             if sent:
@@ -184,7 +218,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
     sent = notifier.send_available_dates_notification(
         chat_id=user.telegram_id,
         available_dates=available_dates,
-        current_date=user.appointment_date,
+        current_date=current_date_for_message,
     )
 
     if sent:
