@@ -126,17 +126,15 @@ infrastructure/
 
 7. **Run the Flask app**
 
-   ```bash
-   cd app
-   python main.py
-   ```
+    ```bash
+    python -m app.main
+    ```
 
 8. **Run the Telegram bot**
 
-   ```bash
-   cd app
-   python bot.py
-   ```
+    ```bash
+    python -m app.bot
+    ```
 
 ---
 

@@ -22,7 +22,10 @@ load_config()
 
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = config.telegram_bot_token if config.validate_required("TELEGRAM_BOT_TOKEN") == [] else ""
+try:
+    BOT_TOKEN = config.telegram_bot_token
+except RuntimeError:
+    BOT_TOKEN = ""
 TELEGRAM_API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}"
 REG_DATA_KEY = "registration"
 TELEGRAM_DATE_FORMAT = "%d/%m/%Y"
@@ -294,4 +297,3 @@ def process_telegram_update(update: dict) -> None:
             _send_message(chat_id, "❌ Erro ao salvar cadastro. Tente novamente com /start.")
         finally:
             _sessions.pop(session_key, None)
-
