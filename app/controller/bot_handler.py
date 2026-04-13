@@ -44,6 +44,16 @@ _sqs_client = None
 _sessions: dict[str, dict[str, Any]] = {}
 
 
+def _build_help_message() -> str:
+    return (
+        "🤖 <b>Comandos disponíveis</b>\n\n"
+        "• /register - Iniciar novo cadastro\n"
+        "• /status - Ver status do monitoramento\n"
+        "• /cancel - Cancelar notificações\n"
+        "• /help - Mostrar esta ajuda"
+    )
+
+
 def _get_db_client() -> DynamoDBClient:
     global _db_client
     if _db_client is None:
@@ -183,6 +193,10 @@ def process_telegram_update(update: dict) -> None:
     telegram_id = str(user.get("id", chat_id))
     session_key = f"{chat_id}:{telegram_id}"
 
+    if text.lower() == "/help":
+        _send_message(chat_id, _build_help_message())
+        return
+
     if text.lower() == "/status":
         _handle_status(chat_id, telegram_id)
         return
@@ -192,6 +206,16 @@ def process_telegram_update(update: dict) -> None:
         return
 
     if text.lower() == "/start":
+        _send_message(
+            chat_id,
+            (
+                "Olá! 👋 Bem-vindo ao monitor de reagendamento.\n\n"
+                "Use /register para iniciar seu cadastro ou /help para ver todas as opções."
+            ),
+        )
+        return
+
+    if text.lower() == "/register":
         _sessions[session_key] = _new_session()
         _send_message(
             chat_id,
@@ -205,7 +229,10 @@ def process_telegram_update(update: dict) -> None:
 
     session = _sessions.get(session_key)
     if not session:
-        _send_message(chat_id, "Envie /start para iniciar seu cadastro.")
+        _send_message(
+            chat_id,
+            "Use /register para iniciar seu cadastro ou /help para ver os comandos disponíveis.",
+        )
         return
 
     data = session[REG_DATA_KEY]

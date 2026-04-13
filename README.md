@@ -204,9 +204,11 @@ curl -X POST http://localhost:5000/register \
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Begin registration flow |
+| `/start` | Show welcome menu and quick guidance |
+| `/register` | Begin registration flow |
 | `/status` | Check current monitoring status |
 | `/cancel` | Cancel notifications |
+| `/help` | Show available commands |
 
 ---
 
