@@ -174,6 +174,9 @@ infrastructure/
 | `ENVIRONMENT` | Runtime environment (`dev` shows browser by default; other values run headless by default) |
 | `SELENIUM_HEADLESS` | Optional override for browser mode (`true`/`false`) |
 | `CHROMEDRIVER_PATH` | Optional path to ChromeDriver binary |
+| `SELENIUM_CAPTCHA_MANUAL_WAIT` | If `true`, and running non-headless, waits for you to complete CAPTCHA manually (default: true when not headless) |
+| `SELENIUM_CAPTCHA_WAIT_SECONDS` | Max seconds to wait for manual CAPTCHA completion (default: 180 in non-headless; 0 in headless) |
+| `SELENIUM_DEBUG_DIR` | Directory to store Selenium screenshots on failures/timeouts (default: `./artifacts/selenium` locally, `/tmp/selenium` on Lambda) |
 
 ---
 
