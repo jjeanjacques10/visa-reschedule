@@ -49,9 +49,14 @@ REDRIVE_POLICY="{\"deadLetterTargetArn\":\"${DLQ_ARN}\",\"maxReceiveCount\":\"3\
 
 QUEUE_URL=$(ensure_queue "${SQS_QUEUE_NAME}" "VisibilityTimeout=660,MessageRetentionPeriod=86400")
 
+ATTRS_FILE="$(mktemp)"
+trap 'rm -f "${ATTRS_FILE}"' EXIT
+ESCAPED_REDRIVE_POLICY=$(printf '%s' "${REDRIVE_POLICY}" | sed 's/"/\\"/g')
+printf '{"RedrivePolicy":"%s"}' "${ESCAPED_REDRIVE_POLICY}" > "${ATTRS_FILE}"
+
 awslocal sqs set-queue-attributes \
     --queue-url "${QUEUE_URL}" \
-    --attributes "RedrivePolicy=${REDRIVE_POLICY}" \
+    --attributes "file://${ATTRS_FILE}" \
     --region "${AWS_REGION}" >/dev/null
 
 info "SQS provisioning finished."

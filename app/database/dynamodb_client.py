@@ -50,7 +50,9 @@ class DynamoDBClient:
         self._users_table = self._dynamodb.Table(self.users_table_name)
         self._appointments_table = self._dynamodb.Table(self.appointments_table_name)
         logger.info(
-            "DynamoDBClient initialised: users_table=%s, appointments_table=%s",
+            "DynamoDBClient initialised: endpoint=%s, region=%s, users_table=%s, appointments_table=%s",
+            self.endpoint_url or "AWS_DEFAULT_ENDPOINT",
+            self.region_name,
             self.users_table_name,
             self.appointments_table_name,
         )
