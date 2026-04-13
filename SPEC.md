@@ -42,6 +42,7 @@
 ### Table: `visa-reschedule-users-{env}`
 
 **Primary key:** `user_id` (String, UUID v4)
+**GSI:** `telegram_id-index` (`telegram_id` as partition key)
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -58,6 +59,12 @@
 | `last_notified_date` | String (optional) | ISO timestamp of last notification |
 | `preferred_dates` | List\<String\> (optional) | User-specified preferred dates |
 | `payment_status` | String (optional) | Stub for future payment feature |
+
+#### Users table indexes
+
+| Index name | Type | Partition key | Purpose |
+|------------|------|---------------|---------|
+| `telegram_id-index` | GSI | `telegram_id` | Fast lookup of users by Telegram ID for bot flows and notifications |
 
 ### Table: `visa-reschedule-appointments-{env}`
 

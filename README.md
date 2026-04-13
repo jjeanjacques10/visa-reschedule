@@ -100,11 +100,15 @@ infrastructure/
 5. **Create DynamoDB tables locally**
 
    ```bash
-   aws --endpoint-url=http://localhost:4566 dynamodb create-table \
-     --table-name visa-reschedule-users \
-     --attribute-definitions AttributeName=user_id,AttributeType=S \
-     --key-schema AttributeName=user_id,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST
+    aws --endpoint-url=http://localhost:4566 dynamodb create-table \
+      --table-name visa-reschedule-users \
+      --attribute-definitions \
+        AttributeName=user_id,AttributeType=S \
+        AttributeName=telegram_id,AttributeType=S \
+      --key-schema AttributeName=user_id,KeyType=HASH \
+      --global-secondary-indexes \
+        '[{"IndexName":"telegram_id-index","KeySchema":[{"AttributeName":"telegram_id","KeyType":"HASH"}],"Projection":{"ProjectionType":"ALL"}}]' \
+      --billing-mode PAY_PER_REQUEST
 
    aws --endpoint-url=http://localhost:4566 dynamodb create-table \
      --table-name visa-reschedule-appointments \
@@ -144,6 +148,7 @@ infrastructure/
 | `AWS_ACCESS_KEY_ID` | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 | `DYNAMODB_USERS_TABLE` | DynamoDB users table name |
+| `DYNAMODB_USERS_TELEGRAM_INDEX` | Users table GSI name for telegram lookups (default: `telegram_id-index`) |
 | `DYNAMODB_APPOINTMENTS_TABLE` | DynamoDB appointments table name |
 | `DYNAMODB_ENDPOINT_URL` | Override endpoint (LocalStack: `http://localhost:4566`) |
 | `APPOINTMENT_QUEUE_URL` | SQS queue URL |
@@ -186,6 +191,14 @@ curl -X POST http://localhost:5000/register \
 | `/start` | Begin registration flow |
 | `/status` | Check current monitoring status |
 | `/cancel` | Cancel notifications |
+
+---
+
+## Data Schema Documentation
+
+Detailed DynamoDB schema docs (Users, Appointments, and Users table GSI):
+
+- `docs/database-schema.md`
 
 ---
 
