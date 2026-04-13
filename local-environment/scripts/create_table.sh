@@ -11,7 +11,7 @@ warn() { echo "[WARN]  $*" >&2; }
 if awslocal dynamodb describe-table \
         --table-name "${USERS_TABLE}" \
         --region "${AWS_REGION}" \
-        --output text &>/dev/null; then
+    --output text >/dev/null 2>&1; then
     warn "DynamoDB table '${USERS_TABLE}' already exists; skipping."
 else
     info "Creating DynamoDB table '${USERS_TABLE}' with GSI telegram_id-index..."
@@ -31,7 +31,7 @@ fi
 if awslocal dynamodb describe-table \
         --table-name "${APPOINTMENTS_TABLE}" \
         --region "${AWS_REGION}" \
-        --output text &>/dev/null; then
+    --output text >/dev/null 2>&1; then
     warn "DynamoDB table '${APPOINTMENTS_TABLE}' already exists; skipping."
 else
     info "Creating DynamoDB table '${APPOINTMENTS_TABLE}'..."
