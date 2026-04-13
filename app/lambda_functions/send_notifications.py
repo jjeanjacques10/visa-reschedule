@@ -63,7 +63,11 @@ def _resolve_user_from_record(body: dict, db: DynamoDBClient):
     return None
 
 
-def _already_notified_today(last_notified_date: str | None) -> bool:
+def _now_utc_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _already_notified_today_utc(last_notified_date: str | None) -> bool:
     """Return True when last notification date is on the current UTC day."""
     if not last_notified_date:
         return False
@@ -74,9 +78,11 @@ def _already_notified_today(last_notified_date: str | None) -> bool:
         logger.warning("Invalid last_notified_date format: %s", last_notified_date)
         return False
 
-    return parsed.astimezone(timezone.utc).date() == datetime.now(
-        tz=timezone.utc
-    ).date()
+    return parsed.astimezone(timezone.utc).date() == datetime.now(tz=timezone.utc).date()
+
+
+def _can_send_daily_notification(user) -> bool:
+    return not _already_notified_today_utc(user.last_notified_date)
 
 
 def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtils) -> None:
@@ -133,7 +139,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         logger.info("No earlier dates found for user_id=%s", user.user_id)
         if not notify_on_complete:
             return
-        if _already_notified_today(user.last_notified_date):
+        if not _can_send_daily_notification(user):
             logger.info(
                 "Skipping no-dates notification for user_id=%s: already notified today",
                 user.user_id,
@@ -148,11 +154,10 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
             ),
         )
         if sent:
-            now_iso = datetime.now(tz=timezone.utc).isoformat()
             db.update_user(
                 user.user_id,
                 {
-                    "last_notified_date": now_iso,
+                    "last_notified_date": _now_utc_iso(),
                     "notification_count": user.notification_count + 1,
                     "status": "pending",
                 },
@@ -166,7 +171,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         available_dates,
     )
 
-    if _already_notified_today(user.last_notified_date):
+    if not _can_send_daily_notification(user):
         logger.info(
             "Skipping available-dates notification for user_id=%s: already notified today",
             user.user_id,
@@ -181,11 +186,10 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
     )
 
     if sent:
-        now_iso = datetime.now(tz=timezone.utc).isoformat()
         db.update_user(
             user.user_id,
             {
-                "last_notified_date": now_iso,
+                "last_notified_date": _now_utc_iso(),
                 "notification_count": user.notification_count + 1,
                 "status": "notified",
             },
