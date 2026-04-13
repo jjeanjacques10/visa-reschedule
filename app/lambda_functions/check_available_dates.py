@@ -86,7 +86,9 @@ def handler(event: dict, context: object) -> dict:
             )
             continue
         try:
-            _send_to_sqs(queue_url, user.to_safe_dict())
+            payload = user.to_safe_dict()
+            payload["notify_on_complete"] = True
+            _send_to_sqs(queue_url, payload)
             enqueued += 1
         except ClientError:
             failed += 1

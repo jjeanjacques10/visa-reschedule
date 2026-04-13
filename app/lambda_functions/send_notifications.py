@@ -11,7 +11,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from app.config import load_config
+from app.config import config, load_config
 from app.database.dynamodb_client import DynamoDBClient
 from app.utils.notification_utils import NotificationUtils
 from app.utils.selenium_utils import SeleniumUtils
@@ -45,6 +45,49 @@ def _get_notification_utils() -> NotificationUtils:
     return NotificationUtils(bot_token=bot_token)
 
 
+def _resolve_user_from_record(body: dict, db: DynamoDBClient):
+    """Resolve a user from SQS body using user_id first, then telegram_id."""
+    user_id = body.get("user_id")
+    telegram_id = body.get("telegram_id")
+
+    if user_id:
+        user = db.get_user(str(user_id))
+        if user is not None:
+            return user
+
+    if telegram_id:
+        user = db.get_user_by_telegram_id(str(telegram_id))
+        if user is not None:
+            return user
+
+    return None
+
+
+def _now_utc_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _already_notified_today_utc(last_notified_date: str | None) -> bool:
+    """Return True when last notification date is on the current UTC day."""
+    if not last_notified_date:
+        return False
+
+    try:
+        parsed = datetime.fromisoformat(last_notified_date.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("Invalid last_notified_date format: %s", last_notified_date)
+        return False
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc).date() == datetime.now(tz=timezone.utc).date()
+
+
+def _can_send_daily_notification(user) -> bool:
+    return not _already_notified_today_utc(user.last_notified_date)
+
+
 def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtils) -> None:
     """Process a single SQS record: check dates and notify if applicable."""
     try:
@@ -55,24 +98,23 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
 
     notify_on_complete = bool(body.get("notify_on_complete"))
 
-    user_id = body.get("user_id")
-    if not user_id:
-        logger.error("SQS record missing user_id: %s", body)
-        return
-
     # Always fetch fresh user data from DynamoDB (SQS message may be stale)
-    user = db.get_user(user_id)
+    user = _resolve_user_from_record(body, db)
     if user is None:
-        logger.warning("User not found in DynamoDB: user_id=%s", user_id)
+        logger.warning(
+            "User not found in DynamoDB for record identifiers user_id=%s telegram_id=%s",
+            body.get("user_id"),
+            body.get("telegram_id"),
+        )
         return
 
     if user.status == "cancelled":
-        logger.info("Skipping cancelled user: user_id=%s", user_id)
+        logger.info("Skipping cancelled user: user_id=%s", user.user_id)
         return
 
-    logger.info("Checking dates for user_id=%s", user_id)
+    logger.info("Checking dates for user_id=%s", user.user_id)
 
-    selenium = SeleniumUtils(headless=True)
+    selenium = SeleniumUtils(headless=config.selenium_headless)
     try:
         available_dates = selenium.check_dates_for_user(
             user_id=user.user_id,
@@ -82,7 +124,7 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception(
-            "Selenium check failed for user_id=%s: %s", user_id, exc
+            "Selenium check failed for user_id=%s: %s", user.user_id, exc
         )
         if notify_on_complete:
             notifier.send_message(
@@ -97,9 +139,15 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         selenium.close()
 
     if not available_dates:
-        logger.info("No earlier dates found for user_id=%s", user_id)
+        logger.info("No earlier dates found for user_id=%s", user.user_id)
         if notify_on_complete:
-            notifier.send_message(
+            if not _can_send_daily_notification(user):
+                logger.info(
+                    "Skipping no-dates notification for user_id=%s: already notified today",
+                    user.user_id,
+                )
+                return
+            sent = notifier.send_message(
                 chat_id=user.telegram_id,
                 message=(
                     "✅ <b>Busca concluída.</b>\n"
@@ -107,14 +155,30 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
                     f"Agendamento atual: <b>{user.appointment_date}</b>"
                 ),
             )
+            if sent:
+                db.update_user(
+                    user.user_id,
+                    {
+                        "last_notified_date": _now_utc_iso(),
+                        "notification_count": user.notification_count + 1,
+                        "status": "pending",
+                    },
+                )
         return
 
     logger.info(
         "Found %d earlier date(s) for user_id=%s: %s",
         len(available_dates),
-        user_id,
+        user.user_id,
         available_dates,
     )
+
+    if not _can_send_daily_notification(user):
+        logger.info(
+            "Skipping available-dates notification for user_id=%s: already notified today",
+            user.user_id,
+        )
+        return
 
     # Send Telegram notification
     sent = notifier.send_available_dates_notification(
@@ -124,18 +188,17 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
     )
 
     if sent:
-        now_iso = datetime.now(tz=timezone.utc).isoformat()
         db.update_user(
-            user_id,
+            user.user_id,
             {
-                "last_notified_date": now_iso,
+                "last_notified_date": _now_utc_iso(),
                 "notification_count": user.notification_count + 1,
                 "status": "notified",
             },
         )
-        logger.info("Notification sent and user updated: user_id=%s", user_id)
+        logger.info("Notification sent and user updated: user_id=%s", user.user_id)
     else:
-        logger.warning("Notification failed for user_id=%s", user_id)
+        logger.warning("Notification failed for user_id=%s", user.user_id)
 
 
 def handler(event: dict, context: object) -> dict:

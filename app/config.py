@@ -80,6 +80,21 @@ class Config:
     """
 
     # ------------------------------------------------------------------
+    # Runtime
+    # ------------------------------------------------------------------
+
+    @property
+    def environment(self) -> str:
+        return os.environ.get("ENVIRONMENT", "prod").strip().lower()
+
+    @property
+    def selenium_headless(self) -> bool:
+        explicit = os.environ.get("SELENIUM_HEADLESS")
+        if explicit is not None:
+            return explicit.strip().lower() in ("true", "1", "yes")
+        return self.environment != "dev"
+
+    # ------------------------------------------------------------------
     # AWS
     # ------------------------------------------------------------------
 
