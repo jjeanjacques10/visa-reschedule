@@ -24,7 +24,18 @@ logger = logging.getLogger(__name__)
 
 
 def _find_env_file() -> Optional[Path]:
-    """Walk up from the current working directory looking for a .env file."""
+    """Find a .env file from common local run locations."""
+    module_dir = Path(__file__).resolve().parent
+    candidates = [
+        Path.cwd() / ".env",
+        module_dir / ".env",
+        module_dir.parent / ".env",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    # Fallback: walk up from cwd for compatibility with custom run locations.
     search = Path.cwd()
     for _ in range(5):  # max 5 levels up
         candidate = search / ".env"

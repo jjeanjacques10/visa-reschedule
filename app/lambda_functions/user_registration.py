@@ -9,7 +9,11 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from uuid import uuid4
+
+import boto3
+from botocore.exceptions import ClientError
 
 from app.config import load_config
 from app.database.dynamodb_client import DynamoDBClient
@@ -24,6 +28,35 @@ logger.setLevel(logging.INFO)
 _db_client: DynamoDBClient | None = None
 
 REQUIRED_FIELDS = ("email", "telegram_id", "visa_type", "appointment_date", "password")
+
+
+def _send_sqs_registration_trigger(user: User) -> bool:
+    """Enqueue an immediate check message after successful registration."""
+    try:
+        from app.config import config
+
+        queue_url = config.appointment_queue_url
+    except RuntimeError as exc:
+        logger.info("APPOINTMENT_QUEUE_URL not set; skipping SQS trigger (%s)", exc)
+        return False
+
+    try:
+        parsed = urlparse(queue_url)
+        endpoint_url = None
+        if parsed.scheme and parsed.netloc:
+            endpoint_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        sqs = boto3.client(
+            "sqs",
+            region_name=config.aws_region,
+            endpoint_url=endpoint_url,
+        )
+        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(user.to_safe_dict()))
+        logger.info("Immediate check queued for user_id=%s", user.user_id)
+        return True
+    except ClientError as exc:
+        logger.warning("Failed to enqueue immediate check for user_id=%s: %s", user.user_id, exc)
+        return False
 
 
 def _get_db_client() -> DynamoDBClient:
@@ -89,6 +122,7 @@ def handler(event: dict, context: object) -> dict:
             created_user.user_id,
             created_user.telegram_id,
         )
+        _send_sqs_registration_trigger(created_user)
         # Never return the password in the response
         return _build_response(200, {"user": created_user.to_safe_dict()})
     except ValueError:

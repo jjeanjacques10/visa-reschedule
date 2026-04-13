@@ -53,6 +53,8 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         logger.error("Failed to parse SQS record body: %s", exc)
         return
 
+    notify_on_complete = bool(body.get("notify_on_complete"))
+
     user_id = body.get("user_id")
     if not user_id:
         logger.error("SQS record missing user_id: %s", body)
@@ -82,12 +84,29 @@ def _process_record(record: dict, db: DynamoDBClient, notifier: NotificationUtil
         logger.exception(
             "Selenium check failed for user_id=%s: %s", user_id, exc
         )
+        if notify_on_complete:
+            notifier.send_message(
+                chat_id=user.telegram_id,
+                message=(
+                    "❌ <b>Busca concluída com erro.</b>\n"
+                    "Tente novamente em alguns minutos."
+                ),
+            )
         return
     finally:
         selenium.close()
 
     if not available_dates:
         logger.info("No earlier dates found for user_id=%s", user_id)
+        if notify_on_complete:
+            notifier.send_message(
+                chat_id=user.telegram_id,
+                message=(
+                    "✅ <b>Busca concluída.</b>\n"
+                    "Nenhuma data anterior foi encontrada no momento.\n"
+                    f"Agendamento atual: <b>{user.appointment_date}</b>"
+                ),
+            )
         return
 
     logger.info(

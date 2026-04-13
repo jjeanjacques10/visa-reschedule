@@ -33,7 +33,7 @@ A serverless application that monitors the [AIS USA Visa portal](https://ais.usv
 
 ## Project Structure
 
-```
+```text
 .github/workflows/deploy-lambda.yml   # CI/CD pipeline
 app/
   lambda_functions/
@@ -49,6 +49,8 @@ app/
     payment.py                        # Payment stub (future feature)
   main.py                             # Flask app for local testing
   bot.py                              # Telegram bot for local testing
+  local_sqs_worker.py                 # Local SQS worker (polls queue and invokes send_notifications)
+  enqueue_manual_check.py             # CLI to enqueue a manual SQS check for a user
   requirements.txt
   env.example
   lambda_handler.py                   # Unified Lambda entry point
@@ -84,54 +86,72 @@ infrastructure/
    pip install -r app/requirements.txt
    ```
 
-3. **Configure environment variables**
+3. **Start LocalStack + provision resources (recommended)**
+
+   This repo includes a LocalStack bootstrap script that:
+
+   - Starts LocalStack (DynamoDB + SQS) via Docker Compose
+   - Creates the DynamoDB tables + SQS queue
+   - Copies `local-environment/.env.local` to repo-root `.env`
+
+   Run:
 
    ```bash
-   cp app/env.example app/.env
-   # Edit app/.env with your values
+   cd local-environment
+   ./start.sh
    ```
 
-4. **Start LocalStack** (Docker required)
+4. **Install / configure env vars**
+
+   - Edit the repo-root `.env` created by the script and set `TELEGRAM_BOT_TOKEN`.
+   - If you prefer manual config instead of the script:
+
+     ```bash
+     cp app/env.example .env
+     # Edit .env with your values (LocalStack endpoints + queue URL)
+     ```
+
+5. **Run the Flask app (local API Gateway simulator)**
 
    ```bash
-   docker run --rm -d -p 4566:4566 localstack/localstack
+   python -m app.main
    ```
 
-5. **Create DynamoDB tables locally**
+6. **Run the local SQS worker (process queue messages)**
+
+   In another terminal:
 
    ```bash
-   aws --endpoint-url=http://localhost:4566 dynamodb create-table \
-     --table-name visa-reschedule-users \
-     --attribute-definitions AttributeName=user_id,AttributeType=S \
-     --key-schema AttributeName=user_id,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST
-
-   aws --endpoint-url=http://localhost:4566 dynamodb create-table \
-     --table-name visa-reschedule-appointments \
-     --attribute-definitions AttributeName=appointment_id,AttributeType=S \
-     --key-schema AttributeName=appointment_id,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST
+   python -m app.local_sqs_worker
    ```
 
-6. **Create the SQS queue locally**
+7. **Register a user (choose one)**
+
+   - Telegram onboarding:
+
+     ```bash
+     python -m app.bot
+     ```
+
+     Then send `/start` to your bot and follow the prompts.
+
+   - REST registration:
+     Use `POST /register` (example below). REST registration enqueues an immediate SQS message.
+
+8. **Manual test: enqueue a check via SQS (CLI)**
+
+   This forces a date-check for one user and can notify the user when the search completes:
 
    ```bash
-   aws --endpoint-url=http://localhost:4566 sqs create-queue \
-     --queue-name visa-reschedule-appointments
+   python -m app.enqueue_manual_check --user-id <uuid> --notify-start
+   # or:
+   python -m app.enqueue_manual_check --telegram-id <telegram_id> --notify-start
    ```
 
-7. **Run the Flask app**
+   If you only want to enqueue without “finished” notification:
 
    ```bash
-   cd app
-   python main.py
-   ```
-
-8. **Run the Telegram bot**
-
-   ```bash
-   cd app
-   python bot.py
+   python -m app.enqueue_manual_check --user-id <uuid> --no-notify-complete
    ```
 
 ---
@@ -144,6 +164,7 @@ infrastructure/
 | `AWS_ACCESS_KEY_ID` | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 | `DYNAMODB_USERS_TABLE` | DynamoDB users table name |
+| `DYNAMODB_USERS_TELEGRAM_INDEX` | Users table GSI name for telegram lookups (default: `telegram_id-index`) |
 | `DYNAMODB_APPOINTMENTS_TABLE` | DynamoDB appointments table name |
 | `DYNAMODB_ENDPOINT_URL` | Override endpoint (LocalStack: `http://localhost:4566`) |
 | `APPOINTMENT_QUEUE_URL` | SQS queue URL |
@@ -173,7 +194,7 @@ curl -X POST http://localhost:5000/register \
     "password": "secret",
     "telegram_id": "123456789",
     "visa_type": "B1/B2",
-    "appointment_date": "2025-12-01"
+    "appointment_date": "01/12/2025"
   }'
 ```
 
@@ -186,6 +207,14 @@ curl -X POST http://localhost:5000/register \
 | `/start` | Begin registration flow |
 | `/status` | Check current monitoring status |
 | `/cancel` | Cancel notifications |
+
+---
+
+## Data Schema Documentation
+
+Detailed DynamoDB schema docs (Users, Appointments, and Users table GSI):
+
+- `docs/database-schema.md`
 
 ---
 

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import boto3
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 from app.database.models import Appointment, User
@@ -28,6 +28,7 @@ class DynamoDBClient:
         appointments_table_name: Optional[str] = None,
         endpoint_url: Optional[str] = None,
         region_name: Optional[str] = None,
+        users_telegram_index_name: Optional[str] = None,
     ) -> None:
         self.users_table_name = users_table_name or os.environ.get(
             "DYNAMODB_USERS_TABLE", "visa-reschedule-users"
@@ -37,6 +38,9 @@ class DynamoDBClient:
         )
         self.endpoint_url = endpoint_url or os.environ.get("DYNAMODB_ENDPOINT_URL")
         self.region_name = region_name or os.environ.get("AWS_REGION", "us-east-1")
+        self.users_telegram_index_name = users_telegram_index_name or os.environ.get(
+            "DYNAMODB_USERS_TELEGRAM_INDEX", "telegram_id-index"
+        )
 
         kwargs: dict = {"region_name": self.region_name}
         if self.endpoint_url:
@@ -46,7 +50,9 @@ class DynamoDBClient:
         self._users_table = self._dynamodb.Table(self.users_table_name)
         self._appointments_table = self._dynamodb.Table(self.appointments_table_name)
         logger.info(
-            "DynamoDBClient initialised: users_table=%s, appointments_table=%s",
+            "DynamoDBClient initialised: endpoint=%s, region=%s, users_table=%s, appointments_table=%s",
+            self.endpoint_url or "AWS_DEFAULT_ENDPOINT",
+            self.region_name,
             self.users_table_name,
             self.appointments_table_name,
         )
@@ -86,22 +92,36 @@ class DynamoDBClient:
             raise
 
     def get_user_by_telegram_id(self, telegram_id: str) -> Optional[User]:
-        """Scan for a user matching telegram_id. Returns None if not found."""
+        """Lookup a user by telegram_id using GSI (fallback to scan)."""
         try:
-            response = self._users_table.scan(
-                FilterExpression=Attr("telegram_id").eq(telegram_id)
+            response = self._users_table.query(
+                IndexName=self.users_telegram_index_name,
+                KeyConditionExpression=Key("telegram_id").eq(telegram_id),
+                Limit=1,
             )
             items = response.get("Items", [])
             if not items:
                 logger.debug("User not found: telegram_id=%s", telegram_id)
                 return None
             return User.from_dict(items[0])
-        except ClientError:
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ValidationException":
+                logger.warning(
+                    "Users telegram_id index '%s' is unavailable; falling back to scan.",
+                    self.users_telegram_index_name,
+                )
+                response = self._users_table.scan(
+                    FilterExpression=Attr("telegram_id").eq(telegram_id)
+                )
+                items = response.get("Items", [])
+                if not items:
+                    logger.debug("User not found: telegram_id=%s", telegram_id)
+                    return None
+                return User.from_dict(items[0])
             logger.exception(
                 "Failed to get user by telegram_id=%s", telegram_id
             )
             raise
-
     def update_user(self, user_id: str, updates: dict) -> User:
         """Apply a partial update to an existing User item."""
         updates["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
