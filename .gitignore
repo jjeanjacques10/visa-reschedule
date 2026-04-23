@@ -1,0 +1,76 @@
+# ======================
+# OS / Editor
+# ======================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.vscode/
+.idea/
+*.iml
+
+# ======================
+# Logs
+# ======================
+*.log
+
+# ======================
+# Go (build/test)
+# ======================
+*.exe
+*.dll
+*.so
+*.dylib
+
+*.test
+*.out
+
+# Coverage / profiling
+coverage.out
+*.coverprofile
+*.prof
+
+# Common build output folders
+bin/
+dist/
+build/
+out/
+tmp/
+
+# ======================
+# Terraform
+# ======================
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+
+# Variáveis locais (não versionar). Mantenha exemplos versionados.
+*.tfvars
+!*.tfvars.example
+!*.auto.tfvars.example
+
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Artefatos de build das Lambdas (referenciados pelo Terraform)
+infrastructure/terraform/*.zip
+infrastructure/terraform/bootstrap
+infrastructure/terraform/bootstrap.exe
+
+# ======================
+# Secrets / env (local)
+# ======================
+.env
+.env.*
+.envrc
+!.env.example
+!.env.*.example
+
+# Certificates / keys (local)
+*.pem
+*.key
