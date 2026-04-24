@@ -18,12 +18,12 @@ Criar a base do novo repositório `telegram-bot-producer` em Go, com estrutura d
 
 ## Entregáveis
 
-- [ ] Estrutura de diretórios criada (incluindo `infrastructure/terraform`).
-- [ ] `go.mod` e `go.sum` inicializados.
-- [ ] `internal/config/env.go` com leitura/validação de env.
-- [ ] `internal/logger/logger.go` com logs JSON.
-- [ ] `cmd/webhook/main.go` e `cmd/scheduler/main.go` compilando.
-- [ ] `README.md` com instruções de build local.
+- [x] Estrutura de diretórios criada (incluindo `infrastructure/terraform`).
+- [x] `go.mod` e `go.sum` inicializados.
+- [x] `internal/config/env.go` com leitura/validação de env.
+- [x] `internal/logger/logger.go` com logs JSON.
+- [x] `cmd/webhook/main.go` e `cmd/scheduler/main.go` compilando.
+- [x] `README.md` com instruções de build local.
 
 ## Critérios de Aceite
 
