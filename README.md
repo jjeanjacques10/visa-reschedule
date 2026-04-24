@@ -82,7 +82,15 @@ set -a; source ../.env.local; set +a
 go run ./cmd/webhook
 ```
 
-4. Enviar payload de teste para o endpoint:
+4. Ou iniciar o bot local em polling permanente, sem webhook:
+
+```bash
+cd app
+set -a; source ../.env.local; set +a
+go run ./cmd/bot
+```
+
+5. Enviar payload de teste para o endpoint:
 
 ```bash
 ./local-environment/scripts/send_test_message.sh
