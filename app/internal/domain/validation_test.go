@@ -11,6 +11,15 @@ func TestValidateDesiredBeforeCurrent(t *testing.T) {
 	}
 }
 
+func TestValidateDate(t *testing.T) {
+	if err := ValidateDate("2026-09-20"); err != nil {
+		t.Fatalf("expected valid date: %v", err)
+	}
+	if err := ValidateDate("2026-02-30"); err == nil {
+		t.Fatal("expected error for invalid calendar date")
+	}
+}
+
 func TestNormalizeCity(t *testing.T) {
 	if c, ok := NormalizeCity("sao paulo"); !ok || c != "Sao Paulo" {
 		t.Fatal("expected Sao Paulo")
