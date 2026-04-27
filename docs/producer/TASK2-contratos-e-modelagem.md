@@ -14,13 +14,13 @@ Definir os contratos de entrada/saída e os modelos de domínio que serão utili
 
 ## Entregáveis
 
-- [ ] `internal/contracts/telegram_update.go`
-- [ ] `internal/contracts/eventbridge_event.go`
-- [ ] `internal/contracts/sqs_message.go`
-- [ ] `internal/domain/onboarding_state.go`
-- [ ] `internal/domain/user.go`
-- [ ] `internal/domain/validation.go`
-- [ ] testes unitários dos contratos/validações
+- [x] `internal/contracts/telegram_update.go`
+- [x] `internal/contracts/eventbridge_event.go`
+- [x] `internal/contracts/sqs_message.go`
+- [x] `internal/domain/onboarding_state.go`
+- [x] `internal/domain/user.go`
+- [x] `internal/domain/validation.go`
+- [x] testes unitários dos contratos/validações
 
 ## Critérios de Aceite
 

@@ -1,0 +1,6 @@
+aws_region          = "us-east-1"
+project             = "telegram-bot-producer"
+environment         = "dev"
+telegram_bot_token  = "token"
+sqs_queue_arn       = "arn:aws:sqs:us-east-1:123456789012:visa-reschedule-queue"
+sqs_queue_url       = "https://sqs.us-east-1.amazonaws.com/123456789012/visa-reschedule-queue"
